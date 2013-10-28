@@ -1,40 +1,44 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <bcm2835.h>
+#include "font.h"
 
 #define PIN0 RPI_V2_GPIO_P1_13
 #define PIN1 RPI_V2_GPIO_P1_07
 #define POUT0 RPI_V2_GPIO_P1_11
 #define POUT1 RPI_V2_GPIO_P1_15
 
+#define LCD_RESET RPI_V2_GPIO_P1_22
+#define LCD_DATA_COMMAND RPI_V2_GPIO_P1_18
+
 void setReset()
 {
-  bcm2835_gpio_write(POUT0, HIGH);
+  bcm2835_gpio_write(LCD_RESET, LOW);
 }
 
 void clrReset()
 {
-  bcm2835_gpio_write(POUT0, LOW);
+  bcm2835_gpio_write(LCD_RESET, HIGH);
 }
 
 void sendCommand(unsigned char command)
 {
-  bcm2835_gpio_write(POUT1, LOW);
+  bcm2835_gpio_write(LCD_DATA_COMMAND, LOW);
   bcm2835_spi_transfer(command);
 }
 
 void sendData(unsigned char data)
 {
-  bcm2835_gpio_write(POUT1, HIGH);
+  bcm2835_gpio_write(LCD_DATA_COMMAND, HIGH);
   bcm2835_spi_transfer(data);
 }
 
 void initLCD()
 {
   setReset();
-  bcm2835_delay(100);
+  bcm2835_delay(1);
   clrReset();
-  bcm2835_delay(100);
+  bcm2835_delay(120);
 
   sendCommand(0xCB);  
   sendData(0x39); 
@@ -73,7 +77,7 @@ void initLCD()
   sendData(0x10);   //SAP[2:0];BT[3:0] 
 
   sendCommand(0xC5);    //VCM control 
-  sendData(0x3e); //ｶﾔｱﾈｶﾈｵﾚ
+  sendData(0x3e); //
   sendData(0x28); 
 
   sendCommand(0xC7);    //VCM control2 
@@ -143,11 +147,54 @@ void initLCD()
   sendCommand(0x29);    //Display on 
   sendCommand(0x2c); 
 }
-    
+
+unsigned short rgb24to16(unsigned char r, unsigned char g, unsigned char b)
+{
+  unsigned short rgb=0;
+  rgb = (((r & 0xf8) << 8) | ((g & 0xfc) << 3) | ((b & 0xf8) >> 3));
+  
+  return rgb;
+}
+
+void setColor(unsigned short rgb16)
+{
+  sendData(rgb16 >> 8);
+  sendData(rgb16 & 0xff);
+}
+
+void setAddress(unsigned int x, unsigned int y)
+{
+  // set lcd addres
+  sendCommand(0x2a);
+  sendData(x >> 8);
+  sendData(x & 0xff);
+  sendCommand(0x2b);
+  sendData(y >> 8);
+  sendData(y & 0xff);
+  sendCommand(0x2c);
+}
+
+void setDrawArea(unsigned int x, unsigned int y, unsigned int xe, unsigned ye)
+{
+  // set lcd addres
+  sendCommand(0x2a);
+  sendData(x >> 8);
+  sendData(x & 0xff);
+  sendData(xe >> 8);
+  sendData(xe & 0xff);
+  sendCommand(0x2b);
+  sendData(y >> 8);
+  sendData(y & 0xff);
+  sendData(ye >> 8);
+  sendData(ye & 0xff);
+  sendCommand(0x2c);
+}
+
 int main(int argc, char **argv)
 {
   if (!bcm2835_init()) return 1;
 
+  // init GPIO
   bcm2835_gpio_fsel(PIN0, BCM2835_GPIO_FSEL_INPT);
   bcm2835_gpio_fsel(PIN1, BCM2835_GPIO_FSEL_INPT);
 
@@ -157,15 +204,99 @@ int main(int argc, char **argv)
   bcm2835_gpio_fsel(POUT0, BCM2835_GPIO_FSEL_OUTP);
   bcm2835_gpio_fsel(POUT1, BCM2835_GPIO_FSEL_OUTP);
 
+  bcm2835_gpio_fsel(LCD_RESET, BCM2835_GPIO_FSEL_OUTP);
+  bcm2835_gpio_fsel(LCD_DATA_COMMAND, BCM2835_GPIO_FSEL_OUTP);
+  
+  // init SPI
   bcm2835_spi_begin();
   bcm2835_spi_setBitOrder(BCM2835_SPI_BIT_ORDER_MSBFIRST);
   bcm2835_spi_setDataMode(BCM2835_SPI_MODE0);
-  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_65536);
+  bcm2835_spi_setClockDivider(BCM2835_SPI_CLOCK_DIVIDER_16);
   bcm2835_spi_chipSelect(BCM2835_SPI_CS0);
   bcm2835_spi_setChipSelectPolarity(BCM2835_SPI_CS0, LOW);
 
   initLCD();
 
+  setAddress(0, 0);
+
+  int width = 240;
+  int height = 320;
+  unsigned short colors[7];
+  // Test patern 1
+  colors[0] = rgb24to16(192, 192, 192);
+  colors[1] = rgb24to16(192, 192,   0);
+  colors[2] = rgb24to16(  0, 192, 192);
+  colors[3] = rgb24to16(  0, 192,   0);
+  colors[4] = rgb24to16(192,   0, 192);
+  colors[5] = rgb24to16(192,   0,   0);
+  colors[6] = rgb24to16(  0,   0, 192);
+
+  int limit = height * 2 / 3;
+  int band = width / 7;
+  
+  for(int i=0; i<limit; i++)
+    {
+    for(int j=0; j<width; j++)
+      {
+      int index = j / band;
+      if (index > 6) index = 6;
+      setColor(colors[index]);
+      }
+    }
+
+  // Test patern 2
+  colors[0] = rgb24to16(  0,   0,   0);
+  colors[1] = rgb24to16( 42,  42,  42);
+  colors[2] = rgb24to16( 84,  84,  84);
+  colors[3] = rgb24to16(126, 126, 126);
+  colors[4] = rgb24to16(168, 168, 168);
+  colors[5] = rgb24to16(210, 210, 210);
+  colors[6] = rgb24to16(252, 252, 252);
+  limit = height / 6;
+  for(int i=0; i<limit; i++)
+    {
+    for(int j=0; j<width; j++)
+      {
+      int index = j / band;
+      if (index > 6) index = 6;
+      setColor(colors[index]);
+      }
+    }
+
+  // Test patern 3
+  colors[0] = rgb24to16(255,   0,   0);
+  colors[1] = rgb24to16( 64,   0,   0);
+  colors[2] = rgb24to16(  0, 255,   0);
+  colors[3] = rgb24to16(  0,  64,   0);
+  colors[4] = rgb24to16(  0,   0, 255);
+  colors[5] = rgb24to16(  0,   0,  64);
+  band = width / 6;
+  limit = height / 6;
+  for(int i=0; i<=limit; i++)
+    {
+    for(int j=0; j<width; j++)
+      {
+      int index = j / band;
+      if (index > 5) index = 5;
+      setColor(colors[index]);
+      }
+    }
+  
+  setDrawArea(10, 5, 15, 12);
+  char c = 'B';
+  for(int i=0; i<8; i++)
+    {
+    for(int j=0; j<6; j++)
+      {
+      if((Font[c-0x20][j] >> i) & 0x01 && j < 5 )
+        setColor(rgb24to16(255, 255, 255));
+      else
+        setColor(rgb24to16(0, 0, 0));
+      }
+    printf("\n");
+    }
+
+/*
   while (1)
     {
     uint8_t in0 = bcm2835_gpio_lev(PIN0);
@@ -198,6 +329,8 @@ int main(int argc, char **argv)
     bcm2835_gpio_write(POUT1, LOW);
     bcm2835_delay(500);
     }
+    */
+  bcm2835_gpio_fsel(LCD_RESET, BCM2835_GPIO_FSEL_INPT);
   bcm2835_spi_end();
   bcm2835_close();
   return 0;
